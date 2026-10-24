@@ -1,5 +1,12 @@
 {
   "data-share": {
-    "shares": []
+    "shares": [
+      {
+        "name": "Memos",
+        "permission": {
+          "rw": ["memos"]
+        }
+      }
+    ]
   }
 }

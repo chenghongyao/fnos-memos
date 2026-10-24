@@ -11,16 +11,25 @@
 APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
 VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
 
+# 数据在共享目录（config/resource 的 data-share）
+SHARE_DIR="${TRIM_DATA_SHARE_PATHS:-}"
+SHARE_DIR="${SHARE_DIR%%:*}"
+if [ -z "${SHARE_DIR}" ] || [ ! -d "${SHARE_DIR}" ]; then
+    SHARE_DIR="/vol1/@appshare/Memos"
+fi
+
 rm -f "${APPDEST}/app.sock" "${APPDEST}/memos.sock" 2>/dev/null || true
 
 WIZARD_DATA_ACTION="${wizard_data_action:-keep}"
 echo "卸载时，用户选择数据保留选项: ${WIZARD_DATA_ACTION}"
 
 if [ "${WIZARD_DATA_ACTION}" = "delete" ]; then
-    echo "开始删除数据目录：${VAR_DIR}"
+    echo "删除共享目录数据：${SHARE_DIR}/data"
+    rm -rf "${SHARE_DIR}/data" 2>/dev/null || true
+    echo "删除运行数据与日志：${VAR_DIR}"
     rm -rf "${VAR_DIR}" 2>/dev/null || true
 else
-    echo "保留数据不动：${VAR_DIR}"
+    echo "保留数据不动：${SHARE_DIR}/data"
 fi
 
 exit 0

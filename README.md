@@ -75,12 +75,22 @@ sudo -n appcenter-cli uninstall Memos
 
 ## 数据
 
+应用数据放在**共享目录**（`config/resource` 的 `data-share` 声明），
+在飞牛「文件管理 → 应用文件」里能直接看到，方便查看与备份：
+
 | 内容 | 路径 |
 |---|---|
-| 数据库与附件 | `/vol1/@appdata/Memos/data` |
+| 数据库与附件 | `/vol1/@appshare/Memos/data/memos_prod.db` |
+| 缩略图缓存 | `/vol1/@appshare/Memos/data/.thumbnail_cache/` |
 | 运行日志 | `/vol1/@appdata/Memos/info.log` |
 
-卸载默认保留数据；要彻底清理手动执行 `sudo rm -rf /vol1/@appdata/Memos`。
+附件默认以 blob 形式存在数据库内（存储设置为 `DATABASE`），所以**备份只需 `data/` 这一个目录**：
+
+```bash
+sudo tar -czf ~/memos-backup-$(date +%F).tar.gz -C /vol1/@appshare/Memos data
+```
+
+卸载默认保留数据；要彻底清理手动执行 `sudo rm -rf /vol1/@appshare/Memos/data /vol1/@appdata/Memos`。
 
 ## 目录
 

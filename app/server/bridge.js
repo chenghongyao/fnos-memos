@@ -94,16 +94,32 @@ function shimScript(base) {
         'return u;' +
         '}catch(e){return u}}' +
         'window.__memosGatewayFix=fix;' +
+        // fnOS 网关(trim_http_cgi)只要看到请求里有 Authorization 头，就会拿它当 NAS token 解析，
+        // 解不开直接返回 "invalid token" 且不转发。所以浏览器端不能发 Authorization：
+        // 统一改名成自定义头 AUTHHDR，由网关桥还原成 Authorization 再转给 memos。
+        'var AUTHHDR="x-memos-auth";' +
+        'function noAuth(hs){try{' +
+        'if(!hs)return hs;' +
+        'if(typeof Headers!=="undefined"&&hs instanceof Headers){var h2=new Headers();' +
+        'hs.forEach(function(v,k){if(k.toLowerCase()==="authorization")h2.set(AUTHHDR,v);else h2.set(k,v)});return h2;}' +
+        'if(Array.isArray(hs)){return hs.map(function(p){try{if(String(p[0]).toLowerCase()==="authorization")return [AUTHHDR,p[1]];}catch(e){}return p});}' +
+        'if(typeof hs==="object"){var o2={};for(var k in hs){try{if(String(k).toLowerCase()==="authorization")o2[AUTHHDR]=hs[k];else o2[k]=hs[k];}catch(e){}}return o2;}' +
+        '}catch(e){}return hs}' +
         'try{var f=window.fetch;if(f){window.fetch=function(i,o){try{' +
         'if(typeof i==="string")i=fix(i);' +
-        'else if(i&&typeof i.url==="string"){var n=fix(i.url);if(n!==i.url)i=new Request(n,i);}' +
+        'else if(i&&typeof i.url==="string"){var n=fix(i.url);try{i=new Request(n,i);}catch(e){}}' +
         'else if(i instanceof URL){i=fix(i.href);}' +
+        'if(i&&typeof i==="object"&&i.headers&&typeof i.url==="string"){try{i=new Request(i,{headers:noAuth(i.headers)});}catch(e){}}' +
+        'if(o&&o.headers)o=Object.assign({},o,{headers:noAuth(o.headers)});' +
         '}catch(e){}return f.call(this,i,o)}}}' +
         'catch(e){}' +
         'try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{' +
         'if(typeof u==="string")arguments[1]=fix(u);' +
-        '}catch(e){}return oo.apply(this,arguments)}}' +
-        'catch(e){}' +
+        '}catch(e){}return oo.apply(this,arguments)}}catch(e){}' +
+        'try{var shr=XMLHttpRequest.prototype.setRequestHeader;' +
+        'XMLHttpRequest.prototype.setRequestHeader=function(k,v){try{' +
+        'if(String(k).toLowerCase()==="authorization")arguments[0]=AUTHHDR;' +
+        '}catch(e){}return shr.apply(this,arguments)}}catch(e){}' +
         'try{var ps=history.pushState,pr=history.replaceState;' +
         'history.pushState=function(a,b,u){try{if(typeof u==="string")arguments[2]=fix(u);}catch(e){}return ps.apply(this,arguments)};' +
         'history.replaceState=function(a,b,u){try{if(typeof u==="string")arguments[2]=fix(u);}catch(e){}return pr.apply(this,arguments)}}' +
@@ -236,6 +252,12 @@ function forwardHeaders(req, opts) {
     for (const key of Object.keys(req.headers)) {
         if (HOP_BY_HOP.has(key.toLowerCase())) continue;
         out[key] = req.headers[key];
+    }
+    // 应用自己的 Authorization 由浏览器改名成 x-memos-auth 传来（避免被 fnOS 网关当成 NAS token 拦掉），
+    // 这里还原成 Authorization 交给 memos。
+    if (out['x-memos-auth'] !== undefined) {
+        out['authorization'] = out['x-memos-auth'];
+        delete out['x-memos-auth'];
     }
     // 需要改写正文，不能让上游压缩
     if (opts.rewrite) delete out['accept-encoding'];

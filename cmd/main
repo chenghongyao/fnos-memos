@@ -28,7 +28,18 @@ NODE_BIN="${NODE_BIN:-${NODE_BIN_DIR}/node}"
 APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
 APP_DIR="${APPDEST}/server"
 VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
-DATA_DIR="${VAR_DIR}/data"
+
+# ---------------------------------------------------------------- 数据目录
+# 应用数据放在「文件管理 → 应用文件」里的共享目录（config/resource 的 data-share），
+# 飞牛会把它注入到 TRIM_DATA_SHARE_PATHS（多个用 : 分隔）。
+# 这样用户能直接在文件管理器里看到并备份，而不是藏在 @appdata 里。
+SHARE_DIR="${TRIM_DATA_SHARE_PATHS:-}"
+SHARE_DIR="${SHARE_DIR%%:*}"                       # 只取第一个
+if [ -z "${SHARE_DIR}" ] || [ ! -d "${SHARE_DIR}" ]; then
+    SHARE_DIR="/vol1/@appshare/Memos"               # 兜底：按约定路径
+fi
+DATA_DIR="${SHARE_DIR}/data"
+
 LOG_FILE="${VAR_DIR}/info.log"
 PID_FILE="${VAR_DIR}/bridge.pid"
 MEMOS_PID_FILE="${VAR_DIR}/memos.pid"
