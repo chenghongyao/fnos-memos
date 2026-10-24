@@ -1,0 +1,17 @@
+appname                    = Memos
+version                    = 26.10.4
+display_name               = Memos
+desc                       = <p>Memos 是一款开源的轻量级笔记/知识库应用，本应用内置官方 <b>26.10-rc.1</b>（linux_arm64）发行版二进制。</p><p>默认完全跑在飞牛统一网关上：访问地址为 <code>http://&lt;NAS&gt;:5666/app/Memos</code>，复用 NAS 域名与登录态，<b>不占用任何 TCP 端口</b>；安装时也可选择额外开放一个 TCP 端口，用浏览器直接访问 <code>http://&lt;NAS&gt;:&lt;端口&gt;/</code>（两种入口同时可用）。笔记数据库与附件保存在应用数据目录，卸载时可选保留或删除。</p><p><b>版权与许可：</b>本应用内置 <a href="https://github.com/usememos/memos">usememos/memos</a> 官方发布的二进制，未修改其功能源码，仅附加飞牛适配层（网关桥与生命周期脚本）。上游项目采用 MIT 许可，版权归 Memos 项目所有（Copyright (c) 2025 Memos）；本应用为第三方飞牛打包，非官方发行版。完整第三方声明与许可证全文见应用目录 <code>server/NOTICE</code> 与 <code>server/LICENSE-MEMOS</code>，也可访问 <code>/app/Memos/_gw/about</code> 查看。</p>
+platform                   = arm
+source                     = thirdparty
+maintainer                 = usememos
+maintainer_url             = https://github.com/usememos/memos
+distributor                = chenghongyao
+distributor_url            = https://github.com/chenghongyao
+os_min_version             = 1.2.0
+ctl_stop                   = true
+desktop_uidir              = ui
+desktop_applaunchname      = Memos.main
+checkport                  = false
+install_dep_apps           = nodejs_v24
+changelog                  = 26.10.4：补充分发者主页（distributor_url）；源码仓库开源发布

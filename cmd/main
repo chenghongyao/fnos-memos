@@ -1,0 +1,263 @@
+#!/bin/bash
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+# Memos · fnOS 生命周期脚本
+#
+# 默认是纯统一网关模式：应用不占任何 TCP 端口
+#   memos 本体  -> ${TRIM_APPDEST}/memos.sock （memos --unix-sock）
+#   网关桥      -> ${TRIM_APPDEST}/app.sock   （由飞牛网关转发 /app/Memos）
+#
+# 安装/配置向导里勾选「开放 TCP 端口」后，网关桥会**额外**开一个 TCP 入口：
+#   网关桥      -> 0.0.0.0:<port>           （浏览器直接 http://<NAS>:<port>/ 访问）
+# 两种入口同时存在：飞牛桌面图标仍然走统一网关。
+#
+# 向导字段由应用中心在每次启动时注入到环境变量（字段名即变量名）：
+#   enable_port  是否开放 TCP 端口（true/false）
+#   port         TCP 端口号
+#   host         TCP 监听地址
+#   instance_url 实例外部地址（可选）
+set -u
+
+# Node.js 运行时来自依赖应用 nodejs_v24（见 manifest 的 install_dep_apps）
+NODE_BIN_DIR="${NODE_BIN_DIR:-/var/apps/nodejs_v24/target/bin}"
+export PATH="${NODE_BIN_DIR}:$PATH"
+NODE_BIN="${NODE_BIN:-${NODE_BIN_DIR}/node}"
+
+APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
+APP_DIR="${APPDEST}/server"
+VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
+DATA_DIR="${VAR_DIR}/data"
+LOG_FILE="${VAR_DIR}/info.log"
+PID_FILE="${VAR_DIR}/bridge.pid"
+MEMOS_PID_FILE="${VAR_DIR}/memos.pid"
+
+# socket 名字必须与 app/ui/config 的 gatewaySocket 一致
+APP_SOCK="${APPDEST}/app.sock"
+# memos 自身的 socket（上游）
+MEMOS_SOCK="${APPDEST}/memos.sock"
+# 前缀必须与 gatewayPrefix 一致（严格 /app/<appname>）
+GW_PREFIX="/app/Memos"
+
+MEMOS_BIN="${APP_DIR}/memos"
+BRIDGE_JS="${APP_DIR}/bridge.js"
+# 安装向导里填写的实例外部地址（可选）
+INSTANCE_URL_FILE="${VAR_DIR}/instance_url"
+
+# 可选 TCP 入口（向导字段）
+ENABLE_PORT="${enable_port:-false}"
+TCP_PORT="${port:-}"
+TCP_HOST="${host:-0.0.0.0}"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
+}
+
+fail_msg() {
+    local msg="$1"
+    log_msg "${msg}"
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+        echo "${msg}" >> "${TRIM_TEMP_LOGFILE}"
+    fi
+}
+
+check_process() {
+    kill -0 "$1" 2>/dev/null
+}
+
+pid_of() {
+    [ -f "$1" ] || return 1
+    local pid
+    pid=$(head -n 1 "$1" 2>/dev/null | tr -d '[:space:]')
+    [ -n "${pid}" ] || return 1
+    echo "${pid}"
+}
+
+is_running() {
+    local pid
+    pid=$(pid_of "${PID_FILE}") || return 1
+    if check_process "${pid}"; then
+        return 0
+    fi
+    rm -f "${PID_FILE}"
+    return 1
+}
+
+is_memos_running() {
+    local pid
+    pid=$(pid_of "${MEMOS_PID_FILE}") || return 1
+    if check_process "${pid}"; then
+        return 0
+    fi
+    rm -f "${MEMOS_PID_FILE}"
+    return 1
+}
+
+start_memos() {
+    if is_memos_running; then
+        log_msg "memos 已在运行"
+        return 0
+    fi
+    if [ ! -x "${MEMOS_BIN}" ]; then
+        fail_msg "找不到可执行的 ${MEMOS_BIN}（应用包不完整？）"
+        return 1
+    fi
+
+    mkdir -p "${DATA_DIR}"
+    # 清掉上次残留的 socket，否则 bind 失败
+    rm -f "${MEMOS_SOCK}"
+
+    # 实例外部地址（可选，来自安装向导）
+    local iurl=""
+    if [ -s "${INSTANCE_URL_FILE}" ]; then
+        iurl=$(head -n 1 "${INSTANCE_URL_FILE}" | tr -d '\r' | sed 's/[[:space:]]*$//')
+        [ -n "${iurl}" ] && log_msg "使用实例外部地址：${iurl}"
+    fi
+
+    if [ -n "${iurl}" ]; then
+        log_msg "启动 memos: ${MEMOS_BIN} --unix-sock ${MEMOS_SOCK} --data ${DATA_DIR} --instance-url ${iurl}"
+        nohup "${MEMOS_BIN}" \
+            --unix-sock "${MEMOS_SOCK}" \
+            --data "${DATA_DIR}" \
+            --log-level info \
+            --instance-url "${iurl}" \
+            >> "${LOG_FILE}" 2>&1 &
+    else
+        log_msg "启动 memos: ${MEMOS_BIN} --unix-sock ${MEMOS_SOCK} --data ${DATA_DIR}"
+        nohup "${MEMOS_BIN}" \
+            --unix-sock "${MEMOS_SOCK}" \
+            --data "${DATA_DIR}" \
+            --log-level info \
+            >> "${LOG_FILE}" 2>&1 &
+    fi
+    printf "%s" "$!" > "${MEMOS_PID_FILE}"
+
+    # 等待 socket 出现（最多约 10 秒）
+    local i=0
+    while [ "${i}" -lt 50 ]; do
+        if [ -S "${MEMOS_SOCK}" ]; then
+            log_msg "memos 已就绪 socket=${MEMOS_SOCK} pid=$(cat "${MEMOS_PID_FILE}")"
+            return 0
+        fi
+        if ! is_memos_running; then
+            break
+        fi
+        sleep 0.2
+        i=$((i + 1))
+    done
+
+    fail_msg "memos 启动失败，详见 ${LOG_FILE}"
+    return 1
+}
+
+start_bridge() {
+    if is_running; then
+        log_msg "网关桥已在运行"
+        return 0
+    fi
+    if [ ! -f "${BRIDGE_JS}" ]; then
+        fail_msg "找不到 ${BRIDGE_JS}（应用包不完整？）"
+        return 1
+    fi
+    if ! [ -x "${NODE_BIN}" ]; then
+        fail_msg "缺少 Node.js 运行时：${NODE_BIN}（请先安装 Node.js v24 应用）"
+        return 1
+    fi
+
+    rm -f "${APP_SOCK}"
+
+    # 可选的 TCP 入口：向导里勾选「开放 TCP 端口」才会启用
+    local TCP_ARGS=""
+    if [ "${ENABLE_PORT}" = "true" ]; then
+        if printf '%s' "${TCP_PORT}" | grep -Eq '^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'; then
+            TCP_ARGS="--port ${TCP_PORT} --host ${TCP_HOST}"
+            log_msg "启用 TCP 入口：${TCP_HOST}:${TCP_PORT}（浏览器可直接访问 http://<NAS>:${TCP_PORT}/）"
+        else
+            fail_msg "TCP 端口号不合法：${TCP_PORT}（应为 1-65535 的整数），本次只启用统一网关入口"
+        fi
+    fi
+
+    log_msg "启动网关桥: ${NODE_BIN} bridge.js --sock ${APP_SOCK} --upstream ${MEMOS_SOCK} --prefix ${GW_PREFIX} ${TCP_ARGS}"
+    # shellcheck disable=SC2086
+    nohup "${NODE_BIN}" "${BRIDGE_JS}" \
+        --sock "${APP_SOCK}" \
+        --upstream "${MEMOS_SOCK}" \
+        --prefix "${GW_PREFIX}" \
+        ${TCP_ARGS} \
+        >> "${LOG_FILE}" 2>&1 &
+    printf "%s" "$!" > "${PID_FILE}"
+
+    sleep 1
+    if is_running && [ -S "${APP_SOCK}" ]; then
+        log_msg "网关桥启动成功 pid=$(cat "${PID_FILE}") socket=ok"
+        return 0
+    fi
+    fail_msg "网关桥启动失败，详见 ${LOG_FILE}"
+    return 1
+}
+
+start_process() {
+    mkdir -p "${VAR_DIR}" "${DATA_DIR}"
+    start_memos || return 1
+    start_bridge || return 1
+    return 0
+}
+
+stop_one() {
+    local pidfile="$1"
+    local name="$2"
+    local pid
+    pid=$(pid_of "${pidfile}") || {
+        rm -f "${pidfile}"
+        return 0
+    }
+    log_msg "停止 ${name} pid=${pid}"
+    kill -TERM "${pid}" 2>/dev/null
+    local count=0
+    while check_process "${pid}" && [ "${count}" -lt 10 ]; do
+        sleep 1
+        count=$((count + 1))
+    done
+    if check_process "${pid}"; then
+        log_msg "强制结束 ${name} pid=${pid}"
+        kill -KILL "${pid}" 2>/dev/null
+    fi
+    rm -f "${pidfile}"
+    return 0
+}
+
+stop_process() {
+    stop_one "${PID_FILE}" "网关桥"
+    stop_one "${MEMOS_PID_FILE}" "memos"
+    # socket 也要删，否则下次 start 可能 bind EADDRINUSE
+    rm -f "${APP_SOCK}" "${MEMOS_SOCK}"
+    log_msg "已停止"
+    return 0
+}
+
+case "${1:-}" in
+start)
+    start_process || exit 1
+    exit 0
+    ;;
+stop)
+    stop_process || exit 1
+    exit 0
+    ;;
+status)
+    if is_running && is_memos_running; then
+        # 顺带把当前生效的入口信息写进日志，方便排查
+        if [ "${ENABLE_PORT}" = "true" ] && [ -n "${TCP_PORT}" ]; then
+            log_msg "运行中：统一网关 ${GW_PREFIX}/ ；TCP 入口 http://<NAS>:${TCP_PORT}/"
+        else
+            log_msg "运行中：统一网关 ${GW_PREFIX}/（未开放 TCP 端口）"
+        fi
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    exit 1
+    ;;
+esac

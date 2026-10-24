@@ -1,0 +1,27 @@
+#!/bin/bash
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+# install_init：安装前准备，保持幂等
+# 这里只做检查，不做破坏性动作（升级走同一套脚本）
+APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
+VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
+
+mkdir -p "${VAR_DIR}/data" 2>/dev/null || true
+
+# 保存安装向导里填写的实例外部地址（可选）
+if [ -n "${instance_url:-}" ]; then
+    printf '%s\n' "${instance_url}" > "${VAR_DIR}/instance_url" 2>/dev/null || true
+fi
+
+# 架构检查：包里是 linux_arm64 二进制
+ARCH=$(uname -m 2>/dev/null || echo unknown)
+case "${ARCH}" in
+    aarch64|arm64) ;;
+    *)
+        echo "本应用内置 linux_arm64 的 memos 二进制，当前系统架构为 ${ARCH}，可能无法运行" >> "${TRIM_TEMP_LOGFILE:-/dev/null}"
+        ;;
+esac
+
+exit 0

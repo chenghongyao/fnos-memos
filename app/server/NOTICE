@@ -1,0 +1,74 @@
+Memos for fnOS — 第三方声明与许可（THIRD-PARTY NOTICE）
+=====================================================
+
+本应用（飞牛 fnOS 应用 “Memos”）是一个**第三方打包**，把上游开源项目
+usememos/memos 封装成飞牛应用，并附加一层飞牛适配代码。
+
+上游项目
+--------
+项目名称：Memos
+项目地址：https://github.com/usememos/memos
+官方网站：https://usememos.com
+打包版本：26.10-rc.1（linux_arm64 官方发行版二进制，未修改）
+原始下载：https://github.com/usememos/memos/releases/download/26.10-rc.1/memos_26.10-rc.1_linux_arm64.tar.gz
+发行包 sha256：796d85b70e8de58a6bb7fe69b9a10a5942e4936e913249a30fd01c7b6afc15e6
+内置二进制 sha256：
+  430084b6b30cbb7538f7ebb0c5fcaa9ec1000d69225aa2e871ab7cc03ae5325a  server/memos
+  （本文件与二进制一同分发，可用 sha256sum server/memos 校验）
+
+许可：MIT License
+版权：Copyright (c) 2025 Memos
+许可证全文：见同目录 LICENSE-MEMOS（与上游仓库 LICENSE 完全一致）
+
+商标与名称
+----------
+“Memos” 这一名称、界面图标与品牌标识归 usememos 项目所有。
+本应用为第三方打包，**非官方发行版**，不得被表述为官方产品；
+使用上游名称仅用于说明所封装软件的来源。
+
+本打包自带的代码
+----------------
+以下文件为飞牛适配层，由本打包作者编写，与上游项目无关：
+  app/server/bridge.js      统一网关 / TCP 双入口反向代理与子路径改写
+  cmd/*                     生命周期脚本（start / stop / status / 安装 / 升级 / 卸载 / 配置）
+  config/*                  权限与资源声明
+  wizard/*                  安装 / 配置 / 卸载向导
+  app/ui/*                  桌面入口与图标
+  build.sh、tests/*         打包脚本与自检脚本
+
+这些文件采用与上游相同的 MIT 许可条款发布：
+  Copyright (c) 2026 chenghongyao
+  Permission is hereby granted, free of charge, ... （全文见 LICENSE-MEMOS）
+
+第三方组件
+----------
+Node.js v24（Apache License 2.0）—— 作为独立应用安装，本应用仅以子进程方式调用其运行时，
+未修改、未静态链接其任何代码。
+https://nodejs.org/
+
+Memos 前端所使用的图标与字体由上游项目自身打包分发，遵循上游仓库的许可声明。
+
+MIT License 全文（上游与本打包适配层通用）
+-------------------------------------------
+MIT License
+
+Copyright (c) 2025 Memos
+Copyright (c) 2026 chenghongyao (fnOS packaging layer)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

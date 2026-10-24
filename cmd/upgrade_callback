@@ -1,0 +1,7 @@
+#!/bin/bash
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+# upgrade_callback：升级完成后保持幂等，不触碰用户数据
+exit 0

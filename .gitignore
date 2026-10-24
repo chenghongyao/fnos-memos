@@ -1,0 +1,25 @@
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+#
+# 打包产物与上游二进制不入库；构建时由 build.sh 自动下载并校验 sha256
+Memos.fpk
+*.fpk
+
+# 上游 memos 二进制（61MB，构建时下载）
+app/server/memos
+
+# 下载缓存
+downloads/
+licenses/
+
+# 自检产生的截图与报告
+tests/*.png
+tests/*.json
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

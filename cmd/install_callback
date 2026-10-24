@@ -1,0 +1,19 @@
+#!/bin/bash
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+# install_callback：安装完成后确保可执行权限与数据目录
+APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
+VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
+
+mkdir -p "${VAR_DIR}/data"
+chmod 755 "${APPDEST}/server/memos" 2>/dev/null || true
+chmod 755 "${APPDEST}/server/bridge.js" 2>/dev/null || true
+
+# 保存安装向导里填写的实例外部地址（可选）
+if [ -n "${instance_url:-}" ] && [ ! -s "${VAR_DIR}/instance_url" ]; then
+    printf '%s\n' "${instance_url}" > "${VAR_DIR}/instance_url" 2>/dev/null || true
+fi
+
+exit 0

@@ -1,0 +1,26 @@
+#!/bin/bash
+# 版权与许可：MIT License, Copyright (c) 2026 chenghongyao
+# 本文件属于 Memos 飞牛打包的适配层，与上游 usememos/memos 无关；
+# 上游项目：https://github.com/usememos/memos  （MIT, Copyright (c) 2025 Memos）
+# 第三方声明见 app/server/NOTICE
+# uninstall_callback：卸载清理
+#
+# 卸载向导里的选择（字段名即环境变量名）：
+#   wizard_data_action = keep   → 保留数据（默认），重新安装后可继续使用
+#   wizard_data_action = delete → 删除所有数据（笔记数据库与附件，不可恢复）
+APPDEST="${TRIM_APPDEST:-/var/apps/Memos}"
+VAR_DIR="${TRIM_PKGVAR:-/vol1/@appdata/Memos}"
+
+rm -f "${APPDEST}/app.sock" "${APPDEST}/memos.sock" 2>/dev/null || true
+
+WIZARD_DATA_ACTION="${wizard_data_action:-keep}"
+echo "卸载时，用户选择数据保留选项: ${WIZARD_DATA_ACTION}"
+
+if [ "${WIZARD_DATA_ACTION}" = "delete" ]; then
+    echo "开始删除数据目录：${VAR_DIR}"
+    rm -rf "${VAR_DIR}" 2>/dev/null || true
+else
+    echo "保留数据不动：${VAR_DIR}"
+fi
+
+exit 0
