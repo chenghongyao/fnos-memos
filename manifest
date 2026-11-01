@@ -1,7 +1,7 @@
 appname                    = Memos
-version                    = 26.10.7
+version                    = 26.10.8
 display_name               = Memos
-desc                       = <p>Memos 是一款开源的轻量级笔记/知识库应用，本应用内置官方 <b>26.10-rc.1</b>（linux_arm64）发行版二进制。</p><p>默认完全跑在飞牛统一网关上：访问地址为 <code>http://&lt;NAS&gt;:5666/app/Memos</code>，复用 NAS 域名与登录态，<b>不占用任何 TCP 端口</b>；安装时也可选择额外开放一个 TCP 端口，用浏览器直接访问 <code>http://&lt;NAS&gt;:&lt;端口&gt;/</code>（两种入口同时可用）。笔记数据库与附件保存在应用数据目录，卸载时可选保留或删除。</p><p><b>版权与许可：</b>本应用内置 <a href="https://github.com/usememos/memos">usememos/memos</a> 官方发布的二进制，未修改其功能源码，仅附加飞牛适配层（网关桥与生命周期脚本）。上游项目采用 MIT 许可，版权归 Memos 项目所有（Copyright (c) 2025 Memos）；本应用为第三方飞牛打包，非官方发行版。完整第三方声明与许可证全文见应用目录 <code>server/NOTICE</code> 与 <code>server/LICENSE-MEMOS</code>，也可访问 <code>/app/Memos/_gw/about</code> 查看。</p>
+desc                       = <p>Memos 是一款开源的轻量级笔记/知识库应用，本应用内置官方 <b>26.10-rc.1</b>（linux_arm64）发行版二进制。</p><p>默认完全跑在飞牛统一网关上：访问地址为 <code>http://&lt;NAS&gt;:5666/app/Memos</code>，复用 NAS 域名与登录态，<b>不占用任何 TCP 端口</b>；安装时也可选择额外开放一个 TCP 端口，用浏览器直接访问 <code>http://&lt;NAS&gt;:&lt;端口&gt;/</code>（两种入口同时可用）。笔记数据库与附件保存在应用数据目录，卸载时可选保留或删除。</p><p><b>统一网关免密登录：</b>应用设置里打开「使用飞牛用户名登录」后，从飞牛统一网关（<code>/app/Memos</code>）打开时会自动用飞牛账号登录 Memos，<b>不再需要输入 Memos 密码</b>；飞牛用户名与 Memos 用户名相同则复用同一个账号，否则自动创建一个。用 TCP 端口直接访问时仍按 Memos 原有方式用密码登录。</p><p><b>版权与许可：</b>本应用内置 <a href="https://github.com/usememos/memos">usememos/memos</a> 官方发布的二进制，未修改其功能源码，仅附加飞牛适配层（网关桥与生命周期脚本）。上游项目采用 MIT 许可，版权归 Memos 项目所有（Copyright (c) 2025 Memos）；本应用为第三方飞牛打包，非官方发行版。完整第三方声明与许可证全文见应用目录 <code>server/NOTICE</code> 与 <code>server/LICENSE-MEMOS</code>，也可访问 <code>/app/Memos/_gw/about</code> 查看。</p>
 platform                   = arm
 source                     = thirdparty
 maintainer                 = usememos
@@ -14,4 +14,4 @@ desktop_uidir              = ui
 desktop_applaunchname      = Memos.main
 checkport                  = false
 install_dep_apps           = nodejs_v24
-changelog                  = 26.10.7：数据目录改到共享目录 /vol1/@appshare/Memos（文件管理器可见、便于备份）；去掉首次启动自动搬运旧数据；网关桥把应用自身的 Authorization 头改名为 x-memos-auth 后再还原（规避与网关注入头的潜在冲突）
+changelog                  = 26.10.8：新增「使用飞牛用户名登录」——从飞牛统一网关打开 Memos 时自动用飞牛账号登录，免去密码；应用设置新增该开关与「飞牛管理员权限」；修复统一网关免密登录下图片/附件不显示的问题（网关侧补发访问令牌）；账号映射记录在数据目录 sso-users.json

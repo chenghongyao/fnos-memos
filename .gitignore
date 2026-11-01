@@ -23,3 +23,6 @@ tests/*.json
 Thumbs.db
 *.swp
 *.tmp
+
+# 临时工作目录（截图、下载、调试产物）
+temp/

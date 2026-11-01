@@ -46,9 +46,38 @@ sudo -n appcenter-cli install-fpk "$PWD/Memos.fpk" --env /tmp/memos.env
 | | `port` | TCP 端口号（默认 `8081`） |
 | | `host` | TCP 监听地址（默认 `0.0.0.0`） |
 | | `instance_url` | 实例外部地址，OAuth 回调与分享链接用，可留空 |
+| | `sso_mode` | **使用飞牛用户名登录**（默认 `true`）：从统一网关打开时免密登录 |
+| | `sso_admin` | 飞牛管理员是否映射为 Memos 管理员（默认 `true`） |
 | 卸载 | `wizard_data_action` | `keep` 保留数据（默认）/ `delete` 删除全部数据 |
 
 配置向导保存后会自动重启应用生效。
+
+## 统一网关免密登录（使用飞牛用户名登录）
+
+应用设置里打开 **「使用飞牛用户名登录」** 后，从飞牛统一网关
+（`http://<NAS>:5666/app/Memos`，飞牛桌面图标 / 飞牛 App）打开 Memos 时
+**不再需要输入 Memos 密码**。
+
+工作方式：
+
+1. 飞牛网关 `trim_http_cgi` 转发请求时带上身份头
+   `X-Trim-Userid` / `X-Trim-Username` / `X-Trim-Isadmin`；
+2. 网关桥据此把飞牛账号映射成一个 Memos 账号：
+   - 飞牛用户名与 Memos 用户名**相同** → 直接复用同一个 Memos 账号（角色不变）；
+   - **不同或没有** → 用管理员令牌自动创建一个 Memos 账号（随机密码，可在 Memos「设置 → 账号」里自行改密码）；
+3. 网关桥用 Memos 实例密钥签发访问令牌，注入页面，前端据此直接进入已登录状态；
+   前端刷新令牌时也由网关桥代为换发，不会掉登录。
+
+映射关系保存在数据目录的 `sso-users.json`，可在
+`/_gw/health`（网关入口）或 `/_gw/health`（TCP 入口）里查看。
+
+注意：
+
+- 只在**统一网关入口**生效；用 TCP 端口直接访问仍然走 Memos 自己的用户名密码。
+- 网关侧会替浏览器补发访问令牌，所以图片、附件、下载在统一网关下都能正常显示。
+- 在 Memos 里点「退出登录」后，本会话不再自动登录（网关会记住这次退出，24 小时内有效）。
+- 关闭该开关不会删除已创建的 Memos 账号，只是回到密码登录。
+- 网关桥会读取 Memos 的 SQLite 库（同一台机器、同一个应用），仅用于签发本实例的令牌。
 
 ## 升级 / 卸载
 
@@ -82,6 +111,7 @@ sudo -n appcenter-cli uninstall Memos
 |---|---|
 | 数据库与附件 | `/vol1/@appshare/Memos/data/memos_prod.db` |
 | 缩略图缓存 | `/vol1/@appshare/Memos/data/.thumbnail_cache/` |
+| 免密登录账号映射 | `/vol1/@appshare/Memos/data/sso-users.json` |
 | 运行日志 | `/vol1/@appdata/Memos/info.log` |
 
 附件默认以 blob 形式存在数据库内（存储设置为 `DATABASE`），所以**备份只需 `data/` 这一个目录**：

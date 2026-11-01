@@ -18,6 +18,8 @@
 #   port         TCP 端口号
 #   host         TCP 监听地址
 #   instance_url 实例外部地址（可选）
+#   sso_mode     统一网关免密登录开关（true/false）
+#   sso_admin    NAS 管理员是否映射为 Memos 管理员（true/false）
 set -u
 
 # Node.js 运行时来自依赖应用 nodejs_v24（见 manifest 的 install_dep_apps）
@@ -60,6 +62,14 @@ INSTANCE_URL_FILE="${VAR_DIR}/instance_url"
 ENABLE_PORT="${enable_port:-false}"
 TCP_PORT="${port:-}"
 TCP_HOST="${host:-0.0.0.0}"
+
+# 统一网关免密登录（SSO）：向导字段 sso_mode / sso_admin
+SSO_MODE="${sso_mode:-true}"
+SSO_ADMIN="${sso_admin:-true}"
+SSO_ARGS="--sso true --sso-admin ${SSO_ADMIN}"
+if [ "${SSO_MODE}" = "false" ]; then
+    SSO_ARGS="--sso false"
+fi
 
 log_msg() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"
@@ -189,12 +199,14 @@ start_bridge() {
         fi
     fi
 
-    log_msg "启动网关桥: ${NODE_BIN} bridge.js --sock ${APP_SOCK} --upstream ${MEMOS_SOCK} --prefix ${GW_PREFIX} ${TCP_ARGS}"
+    log_msg "启动网关桥: ${NODE_BIN} bridge.js --sock ${APP_SOCK} --upstream ${MEMOS_SOCK} --prefix ${GW_PREFIX} --data-dir ${DATA_DIR} ${SSO_ARGS} ${TCP_ARGS}"
     # shellcheck disable=SC2086
     nohup "${NODE_BIN}" "${BRIDGE_JS}" \
         --sock "${APP_SOCK}" \
         --upstream "${MEMOS_SOCK}" \
         --prefix "${GW_PREFIX}" \
+        --data-dir "${DATA_DIR}" \
+        ${SSO_ARGS} \
         ${TCP_ARGS} \
         >> "${LOG_FILE}" 2>&1 &
     printf "%s" "$!" > "${PID_FILE}"

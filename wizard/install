@@ -4,7 +4,7 @@
     "items": [
       {
         "type": "tips",
-        "helpText": "Memos 通过飞牛统一网关访问：<code>http://&lt;NAS&gt;:5666/app/Memos</code>（或 https://5667）。默认不开放 TCP 端口，飞牛桌面图标始终走统一网关。"
+        "helpText": "通过统一网关访问：<code>http://&lt;NAS&gt;:5666/app/Memos</code>。"
       },
       {
         "type": "radio",
@@ -49,7 +49,60 @@
       },
       {
         "type": "tips",
-        "helpText": "开放端口后，局域网内任何人都可以绕过 NAS 登录态直接访问 Memos（仍需 Memos 自己的账号），建议配合防火墙或反向代理限制来源。"
+        "helpText": "开放端口可被局域网直接访问，请注意风险。"
+      }
+    ]
+  },
+  {
+    "stepTitle": "统一网关免密登录",
+    "items": [
+      {
+        "type": "radio",
+        "field": "sso_mode",
+        "label": "使用飞牛用户名登录",
+        "initValue": "true",
+        "options": [
+          {
+            "label": "是（推荐）：用飞牛账号自动登录，免密码",
+            "value": "true"
+          },
+          {
+            "label": "否：用 Memos 密码登录",
+            "value": "false"
+          }
+        ],
+        "rules": [
+          {
+            "required": true,
+            "message": "请选择"
+          }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "sso_admin",
+        "label": "飞牛管理员权限",
+        "initValue": "true",
+        "options": [
+          {
+            "label": "Memos 管理员",
+            "value": "true"
+          },
+          {
+            "label": "普通用户",
+            "value": "false"
+          }
+        ],
+        "rules": [
+          {
+            "required": true,
+            "message": "请选择"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "开启后，从统一网关打开 Memos 时自动用飞牛账号登录，免去密码。"
       }
     ]
   },
@@ -69,7 +122,7 @@
       },
       {
         "type": "tips",
-        "helpText": "留空则使用浏览器实际访问的地址。填写后，OAuth 登录回调、分享链接等会使用该地址，例如 http://192.168.2.106:5666/app/Memos"
+        "helpText": "留空则用浏览器实际访问的地址；OAuth 回调与分享链接会使用它。"
       }
     ]
   }

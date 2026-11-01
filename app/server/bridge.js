@@ -33,6 +33,7 @@ const http = require('http');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 /* ------------------------------------------------------------------ *
  * 参数
@@ -60,6 +61,14 @@ const TCP_PORT = parseInt(argOf('--port', '0'), 10) || 0;
 const TCP_HOST = argOf('--host', '0.0.0.0');
 const HEALTH = '/_gw/health';
 const ABOUT_PATH = '/_gw/about';
+/** memos 数据目录（SQLite 库所在处），SSO 需要读它来签发访问令牌 */
+const DATA_DIR = (argOf('--data-dir', process.env.MEMOS_DATA_DIR || '') || '').replace(/\/+$/, '');
+/** 统一网关免密登录（SSO）总开关 */
+const SSO_ENABLED = String(argOf('--sso', process.env.MEMOS_SSO || 'true')).toLowerCase() !== 'false';
+/** NAS 管理员是否映射为 Memos 管理员 */
+const SSO_ADMIN_MAP = String(argOf('--sso-admin', process.env.MEMOS_SSO_ADMIN || 'true')).toLowerCase() !== 'false';
+/** 注入前端的访问令牌有效期（秒）。默认 30 天：每次打开页面都会重新签发 */
+const SSO_TOKEN_TTL = Math.max(600, parseInt(argOf('--sso-ttl', process.env.MEMOS_SSO_TTL || '2592000'), 10) || 2592000);
 
 const STARTED_AT = Date.now();
 const stats = { requests: 0, proxied: 0, rewritten: 0, errors: 0, lastError: null };
@@ -134,13 +143,13 @@ function shimScript(base) {
     return '<script data-memos-gateway="shim">' + code + '</scr' + 'ipt>';
 }
 
-function rewriteHtml(base, html) {
+function rewriteHtml(base, html, sso) {
     let out = html.replace(
         /(\s(?:src|href|action|poster|formaction)\s*=\s*)(["'])\/(?!\/)/gi,
         (m, pre, q) => pre + q + base + '/'
     );
     // <base> 让页面里剩余的相对路径（assets/xxx.js）也落在网关前缀下
-    const inject = '<base href="' + base + '/">' + shimScript(base);
+    const inject = '<base href="' + base + '/">' + shimScript(base) + ssoScript(sso);
     if (/<head(\s[^>]*)?>/i.test(out)) out = out.replace(/<head(\s[^>]*)?>/i, (m) => m + inject);
     else out = inject + out;
     return out;
@@ -192,6 +201,346 @@ function rewriteJs(base, js) {
 }
 
 /* ------------------------------------------------------------------ *
+ * SSO：统一网关免密登录
+ *
+ * 飞牛统一网关（trim_http_cgi）在转发到 app.sock 时会带上 NAS 身份头：
+ *   X-Trim-Userid / X-Trim-Username / X-Trim-Isadmin
+ * 桥接进程据此把飞牛账号映射成一个 Memos 账号，并给浏览器注入一个
+ * 有效的 Memos 访问令牌（localStorage: memos_access_token），
+ * 于是从飞牛桌面/飞牛 App 打开 Memos 时**不需要再输入 Memos 密码**。
+ *
+ * 实现要点：
+ *   1. Memos 的访问令牌是 HS256 JWT，用实例密钥（system_setting.BASIC.secretKey）签名，
+ *      并且 payload 里带 auth_hash = HMAC(secret, "memos.access-token.auth-hash\0<uid>\0<password_hash>")，
+ *      所以桥接进程只要能读到 SQLite 库，就能自己签发合法令牌（无需 Memos 密码）。
+ *   2. Memos 账号优先「同名匹配」（NAS 用户名 == Memos 用户名 → 直接复用同一个账号），
+ *      匹配不到才用管理员令牌调 UserService/CreateUser 新建（密码随机，用户可在 Memos 里自行改）。
+ *   3. 只在**网关入口**生效；TCP 端口入口没有飞牛身份头，永远走 Memos 自己的密码登录。
+ * ------------------------------------------------------------------ */
+
+/** 从请求头里取出飞牛身份（网关注入） */
+function nasIdentity(req) {
+    const h = (req && req.headers) || {};
+    const uid = h['x-trim-userid'] !== undefined ? String(h['x-trim-userid']) : '';
+    const name = h['x-trim-username'] !== undefined ? String(h['x-trim-username']) : '';
+    if (!uid && !name) return null;
+    const isAdmin = /^(1|true|yes|on)$/i.test(String(h['x-trim-isadmin'] || ''));
+    return {
+        key: uid ? ('uid:' + uid) : ('name:' + name),
+        uid: uid,
+        name: name,
+        isAdmin: isAdmin,
+    };
+}
+
+/** 浏览器是否在本会话里主动退出过（用于让 Memos 里的「退出登录」真的生效） */
+function ssoSignedOut(req) {
+    const cookie = String((req && req.headers && req.headers.cookie) || '');
+    return /(^|;\s*)memos_sso_off=1(;|$)/.test(cookie);
+}
+
+/* ---------------- SQLite 读取 ---------------- */
+let dbHandle = null;
+let dbHandleTried = false;
+let dbFilePath = '';
+
+function openDb() {
+    if (dbHandle) return dbHandle;
+    if (dbHandleTried || !DATA_DIR) return null;
+    dbHandleTried = true;
+    let file = '';
+    try {
+        const files = fs.readdirSync(DATA_DIR).filter((f) => /^memos.*\.db$/.test(f));
+        file = files.includes('memos_prod.db') ? 'memos_prod.db' : (files[0] || '');
+    } catch (e) {
+        return null;
+    }
+    if (!file) return null;
+    const full = path.join(DATA_DIR, file);
+    dbFilePath = full;
+    try {
+        const { DatabaseSync } = require('node:sqlite');
+        dbHandle = new DatabaseSync(full);
+    } catch (e) {
+        log('SSO: 无法打开 Memos 数据库 ' + full + ' : ' + (e.message || e));
+        dbHandle = null;
+    }
+    return dbHandle;
+}
+
+function dbAll(sql) {
+    const db = openDb();
+    if (!db) return [];
+    try {
+        return db.prepare(sql).all();
+    } catch (e) {
+        return [];
+    }
+}
+
+/** 实例签名密钥 */
+function instanceSecret() {
+    const rows = dbAll("select value from system_setting where name = 'BASIC'");
+    if (!rows.length) return '';
+    try {
+        return String((JSON.parse(rows[0].value) || {}).secretKey || '');
+    } catch (e) {
+        return '';
+    }
+}
+
+/** 读出全部本地用户 */
+function listDbUsers() {
+    return dbAll('select id, username, role, password_hash, row_status from "user" order by id')
+        .map((r) => ({
+            id: Number(r.id),
+            username: String(r.username),
+            role: String(r.role || 'USER'),
+            passwordHash: String(r.password_hash || ''),
+            status: String(r.row_status || 'NORMAL'),
+        }));
+}
+
+/* ---------------- 令牌签发 ---------------- */
+function b64url(input) {
+    return Buffer.from(input).toString('base64')
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * 签发一个 Memos 访问令牌（Access Token V2）。
+ * payload 字段必须与上游 memos 的 AccessTokenClaims 对齐：
+ *   type=access / role / status / username / auth_hash / iss / aud / sub / iat / exp
+ */
+function mintAccessToken(user, secret, ttlSec) {
+    const now = Math.floor(Date.now() / 1000);
+    const authHash = crypto.createHmac('sha256', secret)
+        .update('memos.access-token.auth-hash\x00' + user.id + '\x00' + user.passwordHash)
+        .digest('hex');
+    const header = { alg: 'HS256', kid: 'v1', typ: 'JWT' };
+    const payload = {
+        type: 'access',
+        role: user.role,
+        status: user.status,
+        username: user.username,
+        auth_hash: authHash,
+        iss: 'memos',
+        aud: ['user.access-token'],
+        sub: String(user.id),
+        iat: now,
+        exp: now + ttlSec,
+    };
+    const h = b64url(JSON.stringify(header));
+    const p = b64url(JSON.stringify(payload));
+    const sig = b64url(crypto.createHmac('sha256', secret).update(h + '.' + p).digest());
+    return { token: h + '.' + p + '.' + sig, expiresAt: (now + ttlSec) * 1000 };
+}
+
+/* ---------------- 与 Memos 后端说话 ---------------- */
+function apiCall(apiPath, body, token) {
+    return new Promise((resolve) => {
+        const data = Buffer.from(JSON.stringify(body || {}), 'utf8');
+        const headers = { 'content-type': 'application/json', 'content-length': String(data.length) };
+        if (token) headers['authorization'] = 'Bearer ' + token;
+        const req = http.request({
+            socketPath: UPSTREAM, method: 'POST', path: apiPath, headers: headers, agent: false,
+        }, (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () => {
+                const text = Buffer.concat(chunks).toString('utf8');
+                let json = null;
+                try { json = JSON.parse(text); } catch (e) { json = null; }
+                resolve({ status: res.statusCode || 0, json: json, text: text });
+            });
+        });
+        req.on('error', (e) => resolve({ status: 0, error: e.message || String(e) }));
+        req.end(data);
+    });
+}
+
+/* ---------------- 账号映射 ---------------- */
+const SSO_MAP_FILE = DATA_DIR ? path.join(DATA_DIR, 'sso-users.json') : '';
+
+function loadSsoMap() {
+    if (!SSO_MAP_FILE) return {};
+    try {
+        return JSON.parse(fs.readFileSync(SSO_MAP_FILE, 'utf8')) || {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function saveSsoMap(map) {
+    if (!SSO_MAP_FILE) return;
+    try {
+        fs.writeFileSync(SSO_MAP_FILE, JSON.stringify(map, null, 2), { mode: 0o600 });
+    } catch (e) {
+        log('SSO: 映射文件写入失败: ' + (e.message || e));
+    }
+}
+
+/** 把飞牛用户名规整成 Memos 允许的用户名（ASCII 字母数字与 '-'，首尾必须是字母数字，≤36） */
+function sanitizeUsername(raw) {
+    let s = String(raw || '').replace(/[^A-Za-z0-9-]/g, '-').replace(/^-+/, '').replace(/-+$/, '');
+    if (!s) s = 'fnos';
+    if (s.length > 24) s = s.slice(0, 24).replace(/-+$/, '');
+    if (!/^[A-Za-z0-9]/.test(s)) s = 'u' + s;
+    if (!/[A-Za-z0-9]$/.test(s)) s = s + 'u';
+    return s;
+}
+
+/** 生成一个当前未被占用的 Memos 用户名 */
+function pickUsername(identity, used) {
+    const base = sanitizeUsername(identity.name || identity.uid);
+    if (!used.has(base.toLowerCase())) return base;
+    const suffix = '-' + crypto.createHash('sha256').update(identity.key).digest('hex').slice(0, 6);
+    let candidate = (base.slice(0, 24 - suffix.length) + suffix);
+    candidate = candidate.replace(/-+$/, '');
+    let i = 0;
+    while (used.has(candidate.toLowerCase())) {
+        i += 1;
+        candidate = (base.slice(0, 20) + '-' + crypto.createHash('sha256')
+            .update(identity.key + '#' + i).digest('hex').slice(0, 6));
+    }
+    return candidate;
+}
+
+/** 新建一个 Memos 账号 */
+async function createMemosUser(identity, activeUsers, secret) {
+    const used = new Set(activeUsers.map((u) => String(u.username).toLowerCase()));
+    const username = pickUsername(identity, used);
+    const password = crypto.randomBytes(24).toString('base64url');
+    const wantAdmin = SSO_ADMIN_MAP && identity.isAdmin;
+
+    // 有管理员就用管理员令牌建号；一个用户都没有时，无鉴权的 CreateUser 会把第一个用户建成管理员
+    const admins = activeUsers.filter((u) => u.role === 'ADMIN' && u.status === 'NORMAL');
+    let token = '';
+    if (admins.length) token = mintAccessToken(admins[0], secret, 600).token;
+
+    const body = { user: { username: username, password: password, role: wantAdmin ? 'ADMIN' : 'USER' } };
+    const res = await apiCall('/memos.api.UserService/CreateUser', body, token);
+    if (res.status === 200 && res.json) {
+        const created = listDbUsers().find((u) => u.username === username);
+        if (created) {
+            log('SSO: 已为飞牛用户 ' + identity.name + ' 创建 Memos 账号 ' + username +
+                (wantAdmin ? '（管理员）' : ''));
+            return created;
+        }
+        return null;
+    }
+    // 可能是并发创建导致用户名已存在，重新读一次数据库
+    const again = listDbUsers().find((u) => u.username === username);
+    if (again) return again;
+    log('SSO: 创建 Memos 账号失败 ' + username + ' : ' + (res.error || ('HTTP ' + res.status) + ' ' + (res.text || '').slice(0, 200)));
+    return null;
+}
+
+/** 把飞牛账号映射到 Memos 账号（不存在则创建） */
+async function ssoResolveUser(identity) {
+    const secret = instanceSecret();
+    if (!secret) return null;
+    const users = listDbUsers();
+    const active = users.filter((u) => u.status === 'NORMAL');
+    const map = loadSsoMap();
+
+    // 1) 已有映射优先
+    const rec = map[identity.key];
+    if (rec) {
+        const hit = active.find((u) => u.id === rec.memosUserId) || active.find((u) => u.username === rec.username);
+        if (hit) return hit;
+    }
+    // 2) 同名匹配（NAS 用户名 == Memos 用户名 → 视为同一个账号）
+    const sameName = active.find((u) => u.username === identity.name);
+    if (sameName) {
+        const ownedBy = Object.keys(map).find((k) => map[k].memosUserId === sameName.id);
+        if (!ownedBy || ownedBy === identity.key) {
+            if (!rec || rec.memosUserId !== sameName.id) {
+                map[identity.key] = {
+                    memosUserId: sameName.id,
+                    username: sameName.username,
+                    nasName: identity.name,
+                    nasAdmin: !!identity.isAdmin,
+                    updatedAt: new Date().toISOString(),
+                };
+                saveSsoMap(map);
+            }
+            return sameName;
+        }
+    }
+    // 3) 新建
+    const created = await createMemosUser(identity, active, secret);
+    if (!created) return null;
+    map[identity.key] = {
+        memosUserId: created.id,
+        username: created.username,
+        nasName: identity.name,
+        nasAdmin: !!identity.isAdmin,
+        updatedAt: new Date().toISOString(),
+    };
+    saveSsoMap(map);
+    return created;
+}
+
+/** 为一个网关请求算出要注入的令牌（没有飞牛身份就返回 null） */
+async function ssoFor(req) {
+    if (!SSO_ENABLED || !DATA_DIR) return null;
+    if (ssoSignedOut(req)) return null;
+    const identity = nasIdentity(req);
+    if (!identity) return null;
+    try {
+        const secret = instanceSecret();
+        if (!secret) return null;
+        const user = await ssoResolveUser(identity);
+        if (!user) return null;
+        const minted = mintAccessToken(user, secret, SSO_TOKEN_TTL);
+        return {
+            token: minted.token,
+            expiresAt: minted.expiresAt,
+            username: user.username,
+            nasName: identity.name,
+            nasAdmin: identity.isAdmin,
+        };
+    } catch (e) {
+        log('SSO: 解析失败: ' + (e.message || e));
+        return null;
+    }
+}
+
+/** 注入到 HTML 里的脚本：把令牌写进 Memos 前端使用的 localStorage */
+function ssoScript(sso) {
+    if (!sso || !sso.token) return '';
+    const code =
+        '(function(){try{' +
+        'localStorage.setItem("memos_access_token",' + JSON.stringify(sso.token) + ');' +
+        'localStorage.setItem("memos_token_expires_at",' + JSON.stringify(new Date(sso.expiresAt).toISOString()) + ');' +
+        '}catch(e){}})();';
+    try { new Function(code); } catch (e) { log('WARN SSO 注入脚本语法错误: ' + e.message); }
+    return '<script data-memos-gateway="sso">' + code + '</scr' + 'ipt>';
+}
+
+/** 供 /_gw/health 与 /_gw/sso 查看映射情况 */
+function ssoStatus() {
+    if (!SSO_ENABLED) return { enabled: false };
+    const map = loadSsoMap();
+    const rows = Object.keys(map).map((k) => ({
+        nasKey: k,
+        nasName: map[k].nasName,
+        memosUsername: map[k].username,
+        memosUserId: map[k].memosUserId,
+        updatedAt: map[k].updatedAt,
+    }));
+    return {
+        enabled: true,
+        adminMap: SSO_ADMIN_MAP,
+        tokenTtlSec: SSO_TOKEN_TTL,
+        dataDir: DATA_DIR,
+        dbFile: dbFilePath ? path.basename(dbFilePath) : '',
+        mapped: rows,
+    };
+}
+
+/* ------------------------------------------------------------------ *
  * 改写缓存（memos 的主 JS 约 1.2MB，避免每次都重写）
  * ------------------------------------------------------------------ */
 const CACHE_MAX_ENTRIES = 96;
@@ -231,9 +580,9 @@ function rewriteManifest(base, text) {
     return text.replace(/("(?:src|href|start_url|scope)"\s*:\s*")\/(?!\/)/g, (m, p1) => p1 + base + '/');
 }
 
-function transform(base, ct, buf) {
+function transform(base, ct, buf, sso) {
     const text = buf.toString('utf8');
-    if (/html/i.test(ct)) return Buffer.from(rewriteHtml(base, text), 'utf8');
+    if (/html/i.test(ct)) return Buffer.from(rewriteHtml(base, text, sso), 'utf8');
     if (/css/i.test(ct)) return Buffer.from(rewriteCss(base, text), 'utf8');
     if (/manifest/i.test(ct)) return Buffer.from(rewriteManifest(base, text), 'utf8');
     return Buffer.from(rewriteJs(base, text), 'utf8');
@@ -258,6 +607,12 @@ function forwardHeaders(req, opts) {
     if (out['x-memos-auth'] !== undefined) {
         out['authorization'] = out['x-memos-auth'];
         delete out['x-memos-auth'];
+    }
+    // 统一网关免密登录：浏览器发起的 <img>/<video> 等资源请求不会带 Authorization，
+    // 而 Memos 的附件接口（/file/attachments/…）必须鉴权，否则图片会 401 变成裂图。
+    // 这里在网关侧补上 SSO 令牌，图片、附件、下载才能正常显示。
+    if (opts.sso && opts.sso.token && !out['authorization']) {
+        out['authorization'] = 'Bearer ' + opts.sso.token;
     }
     // 需要改写正文，不能让上游压缩
     if (opts.rewrite) delete out['accept-encoding'];
@@ -332,6 +687,12 @@ function proxy(req, res, upPath, search, opts) {
         }
         // 让 nginx 关闭缓冲，SSE / 流式响应才能实时到浏览器
         outHeaders['x-accel-buffering'] = 'no';
+        if (opts.setCookie) {
+            const exist = outHeaders['set-cookie'];
+            const list = Array.isArray(exist) ? exist : (exist ? [exist] : []);
+            list.push(opts.setCookie);
+            outHeaders['set-cookie'] = list;
+        }
         if (opts.rewrite && outHeaders.location) {
             outHeaders.location = rewriteLocation(PREFIX, outHeaders.location);
         }
@@ -344,7 +705,8 @@ function proxy(req, res, upPath, search, opts) {
             return;
         }
 
-        const cacheKey = upPath + '|' + ct + '|' + (outHeaders['content-length'] || '');
+        const cacheKey = upPath + '|' + ct + '|' + (outHeaders['content-length'] || '') +
+            '|' + (opts.sso ? opts.sso.token.slice(-24) : '-');
         const hit = cacheGet(cacheKey);
         if (hit) {
             outHeaders['content-length'] = hit.length;
@@ -366,7 +728,7 @@ function proxy(req, res, upPath, search, opts) {
         upRes.on('end', () => {
             let body = null;
             if (!overflow) {
-                try { body = transform(PREFIX, ct, Buffer.concat(chunks)); }
+                try { body = transform(PREFIX, ct, Buffer.concat(chunks), opts.sso); }
                 catch (e) { body = null; }
             }
             if (!body) {
@@ -453,6 +815,7 @@ function healthPayload(mode) {
         prefix: PREFIX, upstream: UPSTREAM, socket: SOCK,
         tcp: TCP_PORT > 0 ? { host: TCP_HOST, port: TCP_PORT } : null,
         uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000),
+        sso: ssoStatus(),
         stats: stats,
     };
 }
@@ -516,7 +879,7 @@ function aboutPage() {
 }
 
 /** 网关入口：/app/Memos/... → 剥前缀 + 改写 */
-function gatewayHandler(req, res) {
+async function gatewayHandler(req, res) {
     const { p: rawPath, q: search } = splitUrl(req.url || '/');
     const route = toUpstream(rawPath);
 
@@ -535,8 +898,25 @@ function gatewayHandler(req, res) {
         return sendHtml(res, 200, aboutPage());
     }
 
+    // 统一网关免密登录：只有走网关（带飞牛身份头）才启用
+    const isSignOut = /\/memos\.api\.AuthService\/SignOut$/.test(route.rel);
+    const sso = isSignOut ? null : await ssoFor(req);
+
+    // 前端刷新令牌时，网关直接替它换一个（省得前端因为没有 refresh cookie 而掉登录）
+    if (sso && /\/memos\.api\.AuthService\/RefreshToken$/.test(route.rel)) {
+        const body = JSON.stringify({
+            accessToken: sso.token,
+            accessTokenExpireTime: new Date(sso.expiresAt).toISOString(),
+        });
+        return send(res, 200, body, { 'content-type': 'application/json; charset=utf-8' });
+    }
+
     const rel = route.rel === '' ? '/' : route.rel;
-    proxy(req, res, rel, search, { rewrite: true, base: PREFIX });
+    // Memos 里点「退出登录」时，给浏览器种一个标记，本会话不再自动登录
+    const setCookie = isSignOut
+        ? 'memos_sso_off=1; Path=' + (PREFIX || '/') + '; Max-Age=86400; SameSite=Lax'
+        : '';
+    proxy(req, res, rel, search, { rewrite: true, base: PREFIX, sso: sso, setCookie: setCookie });
 }
 
 /** TCP 入口：http://<NAS>:<port>/... → 站点根，原样透传，不改写 */
@@ -574,7 +954,15 @@ if (!SOCK && TCP_PORT <= 0) {
 const servers = [];
 
 if (SOCK) {
-    const gw = attachServer(http.createServer(gatewayHandler));
+    const gw = attachServer(http.createServer((req, res) => {
+        gatewayHandler(req, res).catch((err) => {
+            log('网关处理异常: ' + (err && err.message ? err.message : err));
+            try {
+                if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+                res.end('Memos 网关：内部错误');
+            } catch (e) { /* ignore */ }
+        });
+    }));
     gw.on('upgrade', (req, socket, head) => {
         const { p: rawPath, q: search } = splitUrl(req.url || '/');
         const route = toUpstream(rawPath);
@@ -585,7 +973,8 @@ if (SOCK) {
     try { if (fs.existsSync(SOCK)) fs.unlinkSync(SOCK); } catch (e) {}
     gw.listen(SOCK, () => {
         try { fs.chmodSync(SOCK, 0o666); } catch (e) {}
-        log(`Memos 网关桥 ${VERSION} 网关入口已启动 socket=${SOCK} upstream=${UPSTREAM} prefix=${PREFIX}`);
+        log(`Memos 网关桥 ${VERSION} 网关入口已启动 socket=${SOCK} upstream=${UPSTREAM} prefix=${PREFIX}` +
+            ` SSO=${SSO_ENABLED ? 'on' : 'off'}${SSO_ENABLED ? '(data=' + DATA_DIR + ')' : ''}`);
     });
     gw.on('error', (err) => {
         log('网关 socket 监听失败: ' + (err.code || err.message));
