@@ -13,9 +13,9 @@ cd "$(dirname "$0")"
 command -v fnpack >/dev/null || { echo "缺少 fnpack，请先安装飞牛开发工具"; exit 1; }
 
 # ------------------------------------------------------------------ 上游二进制
-UPSTREAM_VER="26.10-rc.1"
+UPSTREAM_VER="26.10.0"
 UPSTREAM_URL="https://github.com/usememos/memos/releases/download/${UPSTREAM_VER}/memos_${UPSTREAM_VER}_linux_arm64.tar.gz"
-UPSTREAM_SHA256="796d85b70e8de58a6bb7fe69b9a10a5942e4936e913249a30fd01c7b6afc15e6"
+UPSTREAM_SHA256="b4219fd58993d01a1340913487121624fb076099f3686972437c7a40a02225a7"
 BIN="app/server/memos"
 
 ensure_binary() {

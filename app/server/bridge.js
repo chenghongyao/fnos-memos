@@ -829,7 +829,7 @@ const ABOUT = {
         name: 'usememos/memos',
         url: 'https://github.com/usememos/memos',
         site: 'https://usememos.com',
-        version: '26.10-rc.1',
+        version: '26.10.0',
         binary: 'linux_arm64（官方发行版二进制，未修改）',
         license: 'MIT License',
         copyright: 'Copyright (c) 2025 Memos',
@@ -972,7 +972,9 @@ if (SOCK) {
     });
     try { if (fs.existsSync(SOCK)) fs.unlinkSync(SOCK); } catch (e) {}
     gw.listen(SOCK, () => {
-        try { fs.chmodSync(SOCK, 0o666); } catch (e) {}
+        // 只允许本应用用户（memos）连接：飞牛网关 trim_http_cgi 以 root 运行，不受此限制；
+        // 而 0666 会让 NAS 上任何本地用户直连网关桥、伪造 X-Trim-* 身份头拿到管理员令牌。
+        try { fs.chmodSync(SOCK, 0o600); } catch (e) {}
         log(`Memos 网关桥 ${VERSION} 网关入口已启动 socket=${SOCK} upstream=${UPSTREAM} prefix=${PREFIX}` +
             ` SSO=${SSO_ENABLED ? 'on' : 'off'}${SSO_ENABLED ? '(data=' + DATA_DIR + ')' : ''}`);
     });

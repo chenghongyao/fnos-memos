@@ -1,7 +1,7 @@
 # Memos for fnOS
 
 [Memos](https://github.com/usememos/memos) 的飞牛 fnOS 第三方应用包。
-内置官方 **26.10-rc.1**（linux_arm64）二进制，未修改。
+内置官方 **26.10.0**（linux_arm64）二进制，未修改。
 
 默认通过飞牛统一网关访问，**不占用任何 TCP 端口**；安装时也可额外开放一个 TCP 端口。
 
